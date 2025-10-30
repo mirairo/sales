@@ -21,13 +21,108 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # 세션 상태 초기화
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
 if 'selected_product' not in st.session_state:
     st.session_state.selected_product = None
 if 'selected_customer' not in st.session_state:
     st.session_state.selected_customer = None
 
+# ======================
+# 로그인/회원가입 화면
+# ======================
+def show_login_page():
+    st.title("🔐 판매재고관리시스템JK v3.0")
+    st.markdown("---")
+    
+    tab1, tab2 = st.tabs(["로그인", "회원가입"])
+    
+    with tab1:
+        st.subheader("로그인")
+        with st.form("login_form"):
+            email = st.text_input("이메일", placeholder="example@email.com")
+            password = st.text_input("비밀번호", type="password")
+            submitted = st.form_submit_button("로그인", use_container_width=True)
+            
+            if submitted:
+                if not email or not password:
+                    st.error("이메일과 비밀번호를 입력해주세요.")
+                else:
+                    try:
+                        response = supabase.auth.sign_in_with_password({
+                            "email": email,
+                            "password": password
+                        })
+                        
+                        if response.user:
+                            st.session_state.authenticated = True
+                            st.session_state.user_email = email
+                            st.success("✅ 로그인 성공!")
+                            st.rerun()
+                        else:
+                            st.error("로그인에 실패했습니다.")
+                    except Exception as e:
+                        st.error(f"로그인 오류: {str(e)}")
+    
+    with tab2:
+        st.subheader("회원가입")
+        with st.form("signup_form"):
+            new_email = st.text_input("이메일", placeholder="example@email.com", key="signup_email")
+            new_password = st.text_input("비밀번호 (최소 6자)", type="password", key="signup_password")
+            confirm_password = st.text_input("비밀번호 확인", type="password", key="confirm_password")
+            submitted = st.form_submit_button("가입하기", use_container_width=True)
+            
+            if submitted:
+                if not new_email or not new_password:
+                    st.error("모든 필드를 입력해주세요.")
+                elif len(new_password) < 6:
+                    st.error("비밀번호는 최소 6자 이상이어야 합니다.")
+                elif new_password != confirm_password:
+                    st.error("비밀번호가 일치하지 않습니다.")
+                else:
+                    try:
+                        response = supabase.auth.sign_up({
+                            "email": new_email,
+                            "password": new_password
+                        })
+                        
+                        if response.user:
+                            st.success("✅ 회원가입 성공! 이메일을 확인하여 인증을 완료해주세요.")
+                            st.info("이메일 인증 후 로그인해주세요.")
+                        else:
+                            st.error("회원가입에 실패했습니다.")
+                    except Exception as e:
+                        st.error(f"회원가입 오류: {str(e)}")
+
+# 로그아웃 함수
+def logout():
+    try:
+        supabase.auth.sign_out()
+        st.session_state.authenticated = False
+        st.session_state.user_email = None
+        st.rerun()
+    except Exception as e:
+        st.error(f"로그아웃 오류: {str(e)}")
+
+# ======================
+# 인증 확인
+# ======================
+if not st.session_state.authenticated:
+    show_login_page()
+    st.stop()
+
+# ======================
+# 메인 애플리케이션 (로그인 후)
+# ======================
+
 # 사이드바 메뉴
 st.sidebar.title("📦 판매재고관리시스템JK")
+st.sidebar.markdown(f"👤 **{st.session_state.user_email}**")
+if st.sidebar.button("🚪 로그아웃", use_container_width=True):
+    logout()
+
 st.sidebar.markdown("---")
 menu = st.sidebar.radio(
     "메뉴 선택",
@@ -266,6 +361,64 @@ elif menu == "📊 재고 관리":
             df = pd.DataFrame([{
                 '제품코드': item['products']['product_code'],
                 '제품명': item['products']['product_name'],
+                '현재고': item['quantity'],
+                '최소재고': item['min_quantity'],
+                '부족수량': item['min_quantity'] - item['quantity']
+            } for item in low_stock])
+            
+            df = df.sort_values('부족수량', ascending=False)
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.success("✅ 재고 부족 제품이 없습니다!")
+    
+    elif report_type == "월별 매출 통계":
+        st.subheader("📊 월별 매출 통계")
+        
+        sales = supabase.table('sales').select("*").execute()
+        
+        if sales.data:
+            df = pd.DataFrame(sales.data)
+            df['sale_date'] = pd.to_datetime(df['sale_date'])
+            df['month'] = df['sale_date'].dt.to_period('M')
+            
+            monthly = df.groupby('month').agg({
+                'sale_id': 'count',
+                'total_amount': 'sum'
+            }).reset_index()
+            
+            monthly.columns = ['월', '판매건수', '매출액']
+            monthly['매출액'] = monthly['매출액'].apply(lambda x: f"{x:,.0f}원")
+            
+            st.dataframe(monthly, use_container_width=True)
+            
+            total = df['total_amount'].sum()
+            st.metric("총 매출액", f"{total:,.0f}원")
+        else:
+            st.info("판매 데이터가 없습니다.")
+    
+    elif report_type == "입/출고 내역":
+        st.subheader("📋 입/출고 내역 (최근 100건)")
+        
+        trans = supabase.table('transactions').select("*, products(*)").order('transaction_id', desc=True).limit(100).execute()
+        
+        if trans.data:
+            df = pd.DataFrame([{
+                '일시': t['transaction_date'][:19],
+                '제품코드': t['products']['product_code'],
+                '제품명': t['products']['product_name'],
+                '구분': t['transaction_type'],
+                '수량': t['quantity'],
+                '비고': t.get('notes', '')
+            } for t in trans.data])
+            
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("거래 내역이 없습니다.")
+
+# 푸터
+st.sidebar.markdown("---")
+st.sidebar.caption("© JK이러닝연구소 2025")
+st.sidebar.caption("판매재고관리시스템JK v3.0 (Streamlit)")명': item['products']['product_name'],
                 '현재고': item['quantity'],
                 '최소재고': item['min_quantity'],
                 '위치': item.get('location', ''),
@@ -507,8 +660,9 @@ elif menu == "💰 판매 관리":
                             quantity = detail.data[0]['quantity']
                             
                             # 재고 복구
+                            current = supabase.table('inventory').select('quantity').eq('product_id', product_id).execute()
                             supabase.table('inventory').update({
-                                'quantity': supabase.table('inventory').select('quantity').eq('product_id', product_id).execute().data[0]['quantity'] + quantity
+                                'quantity': current.data[0]['quantity'] + quantity
                             }).eq('product_id', product_id).execute()
                             
                             # 판매 삭제
@@ -541,62 +695,4 @@ elif menu == "📈 통계 및 보고서":
         if low_stock:
             df = pd.DataFrame([{
                 '제품코드': item['products']['product_code'],
-                '제품명': item['products']['product_name'],
-                '현재고': item['quantity'],
-                '최소재고': item['min_quantity'],
-                '부족수량': item['min_quantity'] - item['quantity']
-            } for item in low_stock])
-            
-            df = df.sort_values('부족수량', ascending=False)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.success("✅ 재고 부족 제품이 없습니다!")
-    
-    elif report_type == "월별 매출 통계":
-        st.subheader("📊 월별 매출 통계")
-        
-        sales = supabase.table('sales').select("*").execute()
-        
-        if sales.data:
-            df = pd.DataFrame(sales.data)
-            df['sale_date'] = pd.to_datetime(df['sale_date'])
-            df['month'] = df['sale_date'].dt.to_period('M')
-            
-            monthly = df.groupby('month').agg({
-                'sale_id': 'count',
-                'total_amount': 'sum'
-            }).reset_index()
-            
-            monthly.columns = ['월', '판매건수', '매출액']
-            monthly['매출액'] = monthly['매출액'].apply(lambda x: f"{x:,.0f}원")
-            
-            st.dataframe(monthly, use_container_width=True)
-            
-            total = df['total_amount'].sum()
-            st.metric("총 매출액", f"{total:,.0f}원")
-        else:
-            st.info("판매 데이터가 없습니다.")
-    
-    elif report_type == "입/출고 내역":
-        st.subheader("📋 입/출고 내역 (최근 100건)")
-        
-        trans = supabase.table('transactions').select("*, products(*)").order('transaction_id', desc=True).limit(100).execute()
-        
-        if trans.data:
-            df = pd.DataFrame([{
-                '일시': t['transaction_date'][:19],
-                '제품코드': t['products']['product_code'],
-                '제품명': t['products']['product_name'],
-                '구분': t['transaction_type'],
-                '수량': t['quantity'],
-                '비고': t.get('notes', '')
-            } for t in trans.data])
-            
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("거래 내역이 없습니다.")
-
-# 푸터
-st.sidebar.markdown("---")
-st.sidebar.caption("© JK이러닝연구소 2025")
-st.sidebar.caption("판매재고관리시스템JK v3.0 (Streamlit)")
+                '제품
