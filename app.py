@@ -363,64 +363,6 @@ elif menu == "📊 재고 관리":
                 '제품명': item['products']['product_name'],
                 '현재고': item['quantity'],
                 '최소재고': item['min_quantity'],
-                '부족수량': item['min_quantity'] - item['quantity']
-            } for item in low_stock])
-            
-            df = df.sort_values('부족수량', ascending=False)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.success("✅ 재고 부족 제품이 없습니다!")
-    
-    elif report_type == "월별 매출 통계":
-        st.subheader("📊 월별 매출 통계")
-        
-        sales = supabase.table('sales').select("*").execute()
-        
-        if sales.data:
-            df = pd.DataFrame(sales.data)
-            df['sale_date'] = pd.to_datetime(df['sale_date'])
-            df['month'] = df['sale_date'].dt.to_period('M')
-            
-            monthly = df.groupby('month').agg({
-                'sale_id': 'count',
-                'total_amount': 'sum'
-            }).reset_index()
-            
-            monthly.columns = ['월', '판매건수', '매출액']
-            monthly['매출액'] = monthly['매출액'].apply(lambda x: f"{x:,.0f}원")
-            
-            st.dataframe(monthly, use_container_width=True)
-            
-            total = df['total_amount'].sum()
-            st.metric("총 매출액", f"{total:,.0f}원")
-        else:
-            st.info("판매 데이터가 없습니다.")
-    
-    elif report_type == "입/출고 내역":
-        st.subheader("📋 입/출고 내역 (최근 100건)")
-        
-        trans = supabase.table('transactions').select("*, products(*)").order('transaction_id', desc=True).limit(100).execute()
-        
-        if trans.data:
-            df = pd.DataFrame([{
-                '일시': t['transaction_date'][:19],
-                '제품코드': t['products']['product_code'],
-                '제품명': t['products']['product_name'],
-                '구분': t['transaction_type'],
-                '수량': t['quantity'],
-                '비고': t.get('notes', '')
-            } for t in trans.data])
-            
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("거래 내역이 없습니다.")
-
-# 푸터
-st.sidebar.markdown("---")
-st.sidebar.caption("© JK이러닝연구소 2025")
-st.sidebar.caption("판매재고관리시스템JK v3.0 (Streamlit)")명': item['products']['product_name'],
-                '현재고': item['quantity'],
-                '최소재고': item['min_quantity'],
                 '위치': item.get('location', ''),
                 '최종수정일': item['last_updated'][:16] if item['last_updated'] else ''
             } for item in inventory.data])
@@ -695,4 +637,62 @@ elif menu == "📈 통계 및 보고서":
         if low_stock:
             df = pd.DataFrame([{
                 '제품코드': item['products']['product_code'],
-                '제품
+                '제품명': item['products']['product_name'],
+                '현재고': item['quantity'],
+                '최소재고': item['min_quantity'],
+                '부족수량': item['min_quantity'] - item['quantity']
+            } for item in low_stock])
+            
+            df = df.sort_values('부족수량', ascending=False)
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.success("✅ 재고 부족 제품이 없습니다!")
+    
+    elif report_type == "월별 매출 통계":
+        st.subheader("📊 월별 매출 통계")
+        
+        sales = supabase.table('sales').select("*").execute()
+        
+        if sales.data:
+            df = pd.DataFrame(sales.data)
+            df['sale_date'] = pd.to_datetime(df['sale_date'])
+            df['month'] = df['sale_date'].dt.to_period('M')
+            
+            monthly = df.groupby('month').agg({
+                'sale_id': 'count',
+                'total_amount': 'sum'
+            }).reset_index()
+            
+            monthly.columns = ['월', '판매건수', '매출액']
+            monthly['매출액'] = monthly['매출액'].apply(lambda x: f"{x:,.0f}원")
+            
+            st.dataframe(monthly, use_container_width=True)
+            
+            total = df['total_amount'].sum()
+            st.metric("총 매출액", f"{total:,.0f}원")
+        else:
+            st.info("판매 데이터가 없습니다.")
+    
+    elif report_type == "입/출고 내역":
+        st.subheader("📋 입/출고 내역 (최근 100건)")
+        
+        trans = supabase.table('transactions').select("*, products(*)").order('transaction_id', desc=True).limit(100).execute()
+        
+        if trans.data:
+            df = pd.DataFrame([{
+                '일시': t['transaction_date'][:19],
+                '제품코드': t['products']['product_code'],
+                '제품명': t['products']['product_name'],
+                '구분': t['transaction_type'],
+                '수량': t['quantity'],
+                '비고': t.get('notes', '')
+            } for t in trans.data])
+            
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("거래 내역이 없습니다.")
+
+# 푸터
+st.sidebar.markdown("---")
+st.sidebar.caption("© JK이러닝연구소 2025")
+st.sidebar.caption("판매재고관리시스템JK v3.0 (Streamlit)")
