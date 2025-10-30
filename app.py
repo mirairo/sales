@@ -36,12 +36,12 @@ if 'selected_customer' not in st.session_state:
     st.session_state.selected_customer = None
 
 # ======================
-# 사용자 프로필 테이블 생성 함수
+# 사용자 프로필 관리 함수
 # ======================
 def ensure_user_profile(email):
     """사용자 프로필이 없으면 생성"""
     try:
-        # 기존 프로필 확인
+        # 테이블 존재 확인 및 프로필 조회
         result = supabase.table('user_profiles').select("*").eq('email', email).execute()
         
         if not result.data:
@@ -56,7 +56,31 @@ def ensure_user_profile(email):
         else:
             return result.data[0].get('is_admin', False)
     except Exception as e:
-        st.error(f"프로필 확인 오류: {str(e)}")
+        # 테이블이 없는 경우 자동 생성 시도
+        if 'user_profiles' in str(e) and 'not find' in str(e):
+            try:
+                # 테이블 자동 생성을 위한 초기 데이터 삽입
+                is_admin = (email == ADMIN_EMAIL)
+                supabase.table('user_profiles').insert({
+                    'email': email,
+                    'approved': is_admin,
+                    'is_admin': is_admin
+                }).execute()
+                return is_admin
+            except:
+                # 테이블 생성 실패 시 임시로 관리자만 허용
+                st.error("⚠️ user_profiles 테이블을 생성해야 합니다. 아래 SQL을 Supabase에서 실행해주세요.")
+                st.code("""
+CREATE TABLE user_profiles (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  approved BOOLEAN DEFAULT FALSE,
+  is_admin BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+                """, language="sql")
+                # 관리자 이메일이면 임시 승인
+                return (email == ADMIN_EMAIL)
         return False
 
 # ======================
@@ -87,30 +111,51 @@ def show_login_page():
                         
                         if response.user:
                             # 사용자 프로필 확인
-                            profile = supabase.table('user_profiles').select("*").eq('email', email).execute()
-                            
-                            if not profile.data:
-                                # 프로필이 없으면 생성
-                                is_admin = ensure_user_profile(email)
-                                if email != ADMIN_EMAIL:
-                                    st.warning("⏳ 관리자의 승인을 기다리고 있습니다. 승인 후 다시 로그인해주세요.")
-                                    supabase.auth.sign_out()
-                                    st.stop()
-                            else:
-                                user_profile = profile.data[0]
+                            try:
+                                profile = supabase.table('user_profiles').select("*").eq('email', email).execute()
                                 
-                                # 승인 여부 확인
-                                if not user_profile.get('approved', False):
-                                    st.warning("⏳ 관리자의 승인을 기다리고 있습니다. 승인 후 다시 로그인해주세요.")
-                                    supabase.auth.sign_out()
-                                    st.stop()
-                                
-                                # 로그인 성공
-                                st.session_state.authenticated = True
-                                st.session_state.user_email = email
-                                st.session_state.is_admin = user_profile.get('is_admin', False)
-                                st.success("✅ 로그인 성공!")
-                                st.rerun()
+                                if not profile.data:
+                                    # 프로필이 없으면 생성
+                                    is_admin = ensure_user_profile(email)
+                                    if email != ADMIN_EMAIL:
+                                        st.warning("⏳ 관리자의 승인을 기다리고 있습니다. 승인 후 다시 로그인해주세요.")
+                                        supabase.auth.sign_out()
+                                        st.stop()
+                                    else:
+                                        # 관리자는 바로 로그인
+                                        st.session_state.authenticated = True
+                                        st.session_state.user_email = email
+                                        st.session_state.is_admin = True
+                                        st.success("✅ 관리자 로그인 성공!")
+                                        st.rerun()
+                                else:
+                                    user_profile = profile.data[0]
+                                    
+                                    # 승인 여부 확인
+                                    if not user_profile.get('approved', False):
+                                        st.warning("⏳ 관리자의 승인을 기다리고 있습니다. 승인 후 다시 로그인해주세요.")
+                                        supabase.auth.sign_out()
+                                        st.stop()
+                                    
+                                    # 로그인 성공
+                                    st.session_state.authenticated = True
+                                    st.session_state.user_email = email
+                                    st.session_state.is_admin = user_profile.get('is_admin', False)
+                                    st.success("✅ 로그인 성공!")
+                                    st.rerun()
+                            except Exception as profile_error:
+                                # 테이블이 없는 경우 관리자만 임시 허용
+                                if 'user_profiles' in str(profile_error):
+                                    if email == ADMIN_EMAIL:
+                                        st.session_state.authenticated = True
+                                        st.session_state.user_email = email
+                                        st.session_state.is_admin = True
+                                        st.warning("⚠️ user_profiles 테이블을 생성하고 '⚙️ 사용자 관리' 메뉴를 확인해주세요.")
+                                        st.rerun()
+                                    else:
+                                        st.error("시스템 초기화가 필요합니다. 관리자에게 문의하세요.")
+                                else:
+                                    st.error(f"프로필 확인 오류: {str(profile_error)}")
                         else:
                             st.error("로그인에 실패했습니다.")
                     except Exception as e:
@@ -207,79 +252,108 @@ if menu == "⚙️ 사용자 관리":
         st.error("❌ 관리자만 접근할 수 있습니다.")
         st.stop()
     
+    # 테이블 존재 확인
+    try:
+        test_query = supabase.table('user_profiles').select("id").limit(1).execute()
+    except Exception as e:
+        if 'user_profiles' in str(e):
+            st.error("❌ user_profiles 테이블이 없습니다. 먼저 테이블을 생성해주세요.")
+            st.code("""
+-- Supabase SQL Editor에서 실행하세요
+
+CREATE TABLE user_profiles (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  approved BOOLEAN DEFAULT FALSE,
+  is_admin BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 관리자 계정 추가
+INSERT INTO user_profiles (email, approved, is_admin)
+VALUES ('""" + ADMIN_EMAIL + """', true, true);
+            """, language="sql")
+            st.stop()
+    
     tab1, tab2 = st.tabs(["승인 대기", "전체 사용자"])
     
     with tab1:
         st.subheader("승인 대기 중인 사용자")
         
-        pending_users = supabase.table('user_profiles').select("*").eq('approved', False).execute()
-        
-        if pending_users.data:
-            for user in pending_users.data:
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(f"📧 {user['email']}")
-                    st.caption(f"가입일: {user['created_at'][:10]}")
-                with col2:
-                    if st.button("✅ 승인", key=f"approve_{user['id']}"):
-                        try:
-                            supabase.table('user_profiles').update({
-                                'approved': True
-                            }).eq('id', user['id']).execute()
-                            st.success(f"{user['email']} 승인 완료!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"오류: {str(e)}")
-                with col3:
-                    if st.button("❌ 거부", key=f"reject_{user['id']}"):
-                        try:
-                            supabase.table('user_profiles').delete().eq('id', user['id']).execute()
-                            st.success(f"{user['email']} 거부 완료!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"오류: {str(e)}")
-                st.markdown("---")
-        else:
-            st.info("승인 대기 중인 사용자가 없습니다.")
+        try:
+            pending_users = supabase.table('user_profiles').select("*").eq('approved', False).execute()
+            
+            if pending_users.data:
+                for user in pending_users.data:
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.write(f"📧 {user['email']}")
+                        st.caption(f"가입일: {user['created_at'][:10]}")
+                    with col2:
+                        if st.button("✅ 승인", key=f"approve_{user['id']}"):
+                            try:
+                                supabase.table('user_profiles').update({
+                                    'approved': True
+                                }).eq('id', user['id']).execute()
+                                st.success(f"{user['email']} 승인 완료!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"오류: {str(e)}")
+                    with col3:
+                        if st.button("❌ 거부", key=f"reject_{user['id']}"):
+                            try:
+                                supabase.table('user_profiles').delete().eq('id', user['id']).execute()
+                                st.success(f"{user['email']} 거부 완료!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"오류: {str(e)}")
+                    st.markdown("---")
+            else:
+                st.info("승인 대기 중인 사용자가 없습니다.")
+        except Exception as e:
+            st.error(f"조회 오류: {str(e)}")
     
     with tab2:
         st.subheader("전체 사용자 목록")
         
-        all_users = supabase.table('user_profiles').select("*").order('created_at', desc=True).execute()
-        
-        if all_users.data:
-            df = pd.DataFrame(all_users.data)
-            df = df[['email', 'approved', 'is_admin', 'created_at']]
-            df.columns = ['이메일', '승인여부', '관리자', '가입일']
-            df['승인여부'] = df['승인여부'].apply(lambda x: '✅' if x else '⏳')
-            df['관리자'] = df['관리자'].apply(lambda x: '🔑' if x else '')
-            df['가입일'] = df['가입일'].apply(lambda x: x[:10])
+        try:
+            all_users = supabase.table('user_profiles').select("*").order('created_at', desc=True).execute()
             
-            st.dataframe(df, use_container_width=True)
-            
-            with st.expander("사용자 상태 변경"):
-                user_to_modify = st.selectbox(
-                    "사용자 선택",
-                    options=[u['email'] for u in all_users.data if u['email'] != ADMIN_EMAIL]
-                )
+            if all_users.data:
+                df = pd.DataFrame(all_users.data)
+                df = df[['email', 'approved', 'is_admin', 'created_at']]
+                df.columns = ['이메일', '승인여부', '관리자', '가입일']
+                df['승인여부'] = df['승인여부'].apply(lambda x: '✅' if x else '⏳')
+                df['관리자'] = df['관리자'].apply(lambda x: '🔑' if x else '')
+                df['가입일'] = df['가입일'].apply(lambda x: x[:10])
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("승인 상태 토글"):
-                        user = next(u for u in all_users.data if u['email'] == user_to_modify)
-                        supabase.table('user_profiles').update({
-                            'approved': not user['approved']
-                        }).eq('email', user_to_modify).execute()
-                        st.success("상태가 변경되었습니다.")
-                        st.rerun()
+                st.dataframe(df, use_container_width=True)
                 
-                with col2:
-                    if st.button("사용자 삭제", type="primary"):
-                        supabase.table('user_profiles').delete().eq('email', user_to_modify).execute()
-                        st.success("사용자가 삭제되었습니다.")
-                        st.rerun()
-        else:
-            st.info("등록된 사용자가 없습니다.")
+                with st.expander("사용자 상태 변경"):
+                    user_to_modify = st.selectbox(
+                        "사용자 선택",
+                        options=[u['email'] for u in all_users.data if u['email'] != ADMIN_EMAIL]
+                    )
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("승인 상태 토글"):
+                            user = next(u for u in all_users.data if u['email'] == user_to_modify)
+                            supabase.table('user_profiles').update({
+                                'approved': not user['approved']
+                            }).eq('email', user_to_modify).execute()
+                            st.success("상태가 변경되었습니다.")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("사용자 삭제", type="primary"):
+                            supabase.table('user_profiles').delete().eq('email', user_to_modify).execute()
+                            st.success("사용자가 삭제되었습니다.")
+                            st.rerun()
+            else:
+                st.info("등록된 사용자가 없습니다.")
+        except Exception as e:
+            st.error(f"조회 오류: {str(e)}")
 
 # ======================
 # 1. 대시보드
