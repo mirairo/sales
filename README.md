@@ -329,7 +329,7 @@ SUPABASE_KEY = "your-supabase-anon-key"
 ADMIN_EMAIL = "admin@yourdomain.com"
 2️⃣ Streamlit Cloud에서 배포한 경우
 1. Streamlit Cloud 대시보드 접속
-o https://share.streamlit.io/ 로그인
+o https://로그인
 2. 앱 설정 페이지로 이동
 o 배포된 앱 옆의 ⋮ (점 3개) 클릭
 o Settings 선택
