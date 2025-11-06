@@ -920,5 +920,6 @@ elif menu == "📈 통계 및 보고서":
 
 # 푸터
 st.sidebar.markdown("---")
-st.sidebar.caption("© JK이러닝연구소 2025")
+st.sidebar.caption("© JK이러닝연구소 2025", "mirae912023@gmail.com")
 st.sidebar.caption("판매재고관리시스템JK v3.0 (Streamlit)")
+
